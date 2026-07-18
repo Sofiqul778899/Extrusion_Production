@@ -1,0 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-brand-bg: #fdfdfd;
+  --color-brand-surface: #ffffff;
+  --color-brand-border: #e2e8f0;
+  --color-brand-primary: #002D72;
+  --color-brand-success: #76BC21;
+  --color-brand-warning: #FFBF00;
+  --color-brand-danger: #E30613;
+}
+
+@layer base {
+  body {
+    @apply bg-brand-bg text-slate-800 antialiased font-sans transition-colors duration-500;
+  }
+}
+
+.industrial-grid {
+  background-image: 
+    linear-gradient(rgba(0, 0, 0, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.02) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.glass-panel {
+  @apply bg-white border border-slate-200 rounded-xl overflow-hidden shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] transition-all duration-300;
+}
+
+.input-glow:focus-within {
+  @apply border-brand-primary/50 ring-4 ring-brand-primary/5;
+}
+
+.panel-glow {
+  @apply relative overflow-hidden;
+}
+
+.panel-glow::after {
+  content: '';
+  @apply absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-slate-100 to-transparent;
+}
+
+.sidebar-glow {
+  box-shadow: 1px 0 10px rgba(0, 0, 0, 0.03);
+}
+
+.status-indicator {
+  @apply w-2 h-2 rounded-full relative;
+}
+
+.status-indicator::after {
+  content: '';
+  @apply absolute -inset-1 rounded-full animate-pulse opacity-30;
+}
+
+.status-running-glow::after { @apply bg-brand-success; }
+.status-idle-glow::after { @apply bg-brand-warning; }
+.status-breakdown-glow::after { @apply bg-brand-danger; }
+
+.text-gradient {
+  @apply bg-clip-text text-transparent bg-gradient-to-br from-slate-900 to-slate-500;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-100;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 rounded-full hover:bg-slate-400 transition-colors;
+}

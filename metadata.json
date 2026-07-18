@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Extrusion Roll Production Management",
+  "description": "A comprehensive production entry and live dashboard system for flexible packaging manufacturing, integrated with a secure PostgreSQL database server for high-performance relational tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
