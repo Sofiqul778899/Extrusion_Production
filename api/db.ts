@@ -51,7 +51,7 @@ async function getMSSQLPool() {
         port: parseInt(process.env.MSSQL_PORT || '1433', 10),
         user: process.env.MSSQL_USER || 'sa',
         password: process.env.MSSQL_PASSWORD,
-        database: process.env.MSSQL_DATABASE || 'Extrusion',
+        database: process.env.MSSQL_DATABASE || 'Extrusion_DB',
         options: {
           encrypt: process.env.MSSQL_ENCRYPT === 'true', 
           trustServerCertificate: process.env.MSSQL_TRUST_CERT !== 'false' // True by default for local development
@@ -85,6 +85,16 @@ const INITIAL_FALLBACK_DB = {
     roll_settings: { LAST_ROLL_NO: 17413, PREFIX: "R", CURRENT_YEAR: "26" },
     sample_settings: { LAST_SAMPLE_SERIAL: 0 }
   },
+  dropdowns: {
+    ref_shifts: ['Day', 'Night', 'A', 'B', 'C'],
+    ref_production_types: ['Commercial', 'R&D', 'Trial', 'Sample'],
+    ref_uoms: ['Kgs', 'Rolls', 'Meter', 'INCH'],
+    ref_materials: ['LDPE', 'HDPE', 'LLDPE', 'PP', 'BOPP'],
+    ref_inline_print_options: ['Yes', 'No'],
+    ref_years: ['2023', '2024', '2025', '2026', '2027'],
+    ref_breakdown_reasons: ['Mechanical', 'Electrical', 'Pneumatic', 'Hydraulic', 'Sensor Failure', 'Heater Band Burnout'],
+    ref_idle_reasons: ['No Material', 'No Operator', 'Power Interruption', 'Core Shortage', 'Routine Clean-up', 'Awaiting Maintenance Handover']
+  } as Record<string, string[]>,
   operators: [
     { operator_id: 'OP001', name: 'Abul Kalam', email: 'kalam@extrusion.com' },
     { operator_id: 'OP002', name: 'Rahim Uddin', email: 'rahim@extrusion.com' },
@@ -186,6 +196,62 @@ function mapRecordToPascal(r: any) {
 }
 
 export async function runFallbackQuery(text: string, params?: any[]): Promise<any> {
+  // Check for SELECT from ref_ tables
+  if (text.includes("SELECT val FROM ref_")) {
+    const match = text.match(/FROM\s+(ref_\w+)/i);
+    const tableName = match ? match[1].toLowerCase() : '';
+    const db = readFallbackDb();
+    if (!db.dropdowns) {
+      db.dropdowns = {
+        ref_shifts: ['Day', 'Night', 'A', 'B', 'C'],
+        ref_production_types: ['Commercial', 'R&D', 'Trial', 'Sample'],
+        ref_uoms: ['Kgs', 'Rolls', 'Meter', 'INCH'],
+        ref_materials: ['LDPE', 'HDPE', 'LLDPE', 'PP', 'BOPP'],
+        ref_inline_print_options: ['Yes', 'No'],
+        ref_years: ['2023', '2024', '2025', '2026', '2027'],
+        ref_breakdown_reasons: ['Mechanical', 'Electrical', 'Pneumatic', 'Hydraulic', 'Sensor Failure', 'Heater Band Burnout'],
+        ref_idle_reasons: ['No Material', 'No Operator', 'Power Interruption', 'Core Shortage', 'Routine Clean-up', 'Awaiting Maintenance Handover']
+      };
+      writeFallbackDb(db);
+    }
+    const list = db.dropdowns[tableName] || [];
+    return { rows: list.map((val: string) => ({ val })) };
+  }
+
+  // Check for DELETE from ref_ tables
+  if (text.includes("DELETE FROM ref_")) {
+    const match = text.match(/DELETE FROM\s+(ref_\w+)/i);
+    const tableName = match ? match[1].toLowerCase() : '';
+    const db = readFallbackDb();
+    if (!db.dropdowns) {
+      db.dropdowns = {};
+    }
+    db.dropdowns[tableName] = [];
+    writeFallbackDb(db);
+    return { rows: [], rowCount: 0 };
+  }
+
+  // Check for INSERT INTO ref_ tables
+  if (text.includes("INSERT INTO ref_")) {
+    const match = text.match(/INSERT INTO\s+(ref_\w+)/i);
+    const tableName = match ? match[1].toLowerCase() : '';
+    const val = params ? params[0] : null;
+    if (tableName && val) {
+      const db = readFallbackDb();
+      if (!db.dropdowns) {
+        db.dropdowns = {};
+      }
+      if (!db.dropdowns[tableName]) {
+        db.dropdowns[tableName] = [];
+      }
+      if (!db.dropdowns[tableName].includes(val)) {
+        db.dropdowns[tableName].push(val);
+      }
+      writeFallbackDb(db);
+    }
+    return { rows: [], rowCount: 1 };
+  }
+
   // 1. SELECT EXISTS Check
   if (text.includes("SELECT EXISTS") && text.includes("information_schema.tables")) {
     return { rows: [{ exists: true }] };

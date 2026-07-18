@@ -1,8 +1,32 @@
 -- ====================================================================
 -- EXTRUSION PRODUCTION MANAGEMENT DATABASE SCHEMA (MICROSOFT SQL SERVER)
 -- ====================================================================
--- Copy and run this entire script in SQL Server Management Studio (SSMS)
--- targeting your MS SQL Server database (e.g. 'Extrusion').
+
+-- 🇧🇩 ডাটাবেজ তৈরি এবং ব্যবহার করার কুয়েরি (SSMS-এ সরাসরি রান করতে পারেন):
+IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'Extrusion_DB')
+BEGIN
+    CREATE DATABASE Extrusion_DB;
+END;
+GO
+
+USE Extrusion_DB;
+GO
+
+-- ====================================================================
+-- 🇧🇩 বাংলায় নির্দেশাবলী (Bangla Instructions):
+-- 1. প্রথমে আপনার SQL Server Management Studio (SSMS) ওপেন করুন।
+-- 2. একটি নতুন কুয়েরি উইন্ডো খুলুন (New Query)।
+-- 3. এই ফাইলের সম্পূর্ণ কুয়েরি কপি করে রান (Execute অথবা F5) করুন।
+--    এটি স্বয়ংক্রিয়ভাবে 'Extrusion_DB' ডাটাবেজ তৈরি করবে, সেটিতে সুইচ করবে এবং সমস্ত টেবিল 
+--    (app_config, operators, machines, pending_orders, production_records, machine_logs, machine_daily_stats) 
+--    তৈরি করে প্রাথমিক ডেমো ডাটা ইনসার্ট করবে।
+-- ====================================================================
+-- 🇬🇧 English Instructions:
+-- 1. Open SQL Server Management Studio (SSMS).
+-- 2. Open a New Query window.
+-- 3. Copy and run this entire script (Execute or F5).
+--    It will automatically create the 'Extrusion_DB' database, select it, 
+--    create all tables, and seed initial values.
 -- ====================================================================
 
 -- 1. Table: app_config
@@ -25,6 +49,118 @@ IF NOT EXISTS (SELECT 1 FROM dbo.app_config WHERE config_key = 'sample_settings'
 BEGIN
     INSERT INTO dbo.app_config (config_key, config_value) 
     VALUES ('sample_settings', '{"LAST_SAMPLE_SERIAL": 0}');
+END;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.app_config WHERE config_key = 'dropdowns')
+BEGIN
+    INSERT INTO dbo.app_config (config_key, config_value) 
+    VALUES ('dropdowns', '{"shifts": ["Day", "Night", "A", "B", "C"], "productionTypes": ["Commercial", "R&D", "Trial", "Sample"], "uoms": ["Kgs", "Rolls", "Meter", "INCH"], "materials": ["LDPE", "HDPE", "LLDPE", "PP", "BOPP"], "inlinePrintOptions": ["Yes", "No"], "years": ["2023", "2024", "2025", "2026", "2027"], "breakdownReasons": ["Mechanical", "Electrical", "Pneumatic", "Hydraulic", "Sensor Failure", "Heater Band Burnout"], "idleReasons": ["No Material", "No Operator", "Power Interruption", "Core Shortage", "Routine Clean-up", "Awaiting Maintenance Handover"]}');
+END;
+
+
+-- Reference Tables for Dropdowns
+-- Table 1: ref_shifts
+IF OBJECT_ID('dbo.ref_shifts', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ref_shifts (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        val VARCHAR(100) NOT NULL UNIQUE
+    );
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.ref_shifts)
+BEGIN
+    INSERT INTO dbo.ref_shifts (val) VALUES ('Day'), ('Night'), ('A'), ('B'), ('C');
+END;
+
+-- Table 2: ref_production_types
+IF OBJECT_ID('dbo.ref_production_types', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ref_production_types (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        val VARCHAR(100) NOT NULL UNIQUE
+    );
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.ref_production_types)
+BEGIN
+    INSERT INTO dbo.ref_production_types (val) VALUES ('Commercial'), ('R&D'), ('Trial'), ('Sample');
+END;
+
+-- Table 3: ref_uoms
+IF OBJECT_ID('dbo.ref_uoms', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ref_uoms (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        val VARCHAR(100) NOT NULL UNIQUE
+    );
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.ref_uoms)
+BEGIN
+    INSERT INTO dbo.ref_uoms (val) VALUES ('Kgs'), ('Rolls'), ('Meter'), ('INCH');
+END;
+
+-- Table 4: ref_materials
+IF OBJECT_ID('dbo.ref_materials', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ref_materials (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        val VARCHAR(100) NOT NULL UNIQUE
+    );
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.ref_materials)
+BEGIN
+    INSERT INTO dbo.ref_materials (val) VALUES ('LDPE'), ('HDPE'), ('LLDPE'), ('PP'), ('BOPP');
+END;
+
+-- Table 5: ref_inline_print_options
+IF OBJECT_ID('dbo.ref_inline_print_options', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ref_inline_print_options (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        val VARCHAR(100) NOT NULL UNIQUE
+    );
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.ref_inline_print_options)
+BEGIN
+    INSERT INTO dbo.ref_inline_print_options (val) VALUES ('Yes'), ('No');
+END;
+
+-- Table 6: ref_years
+IF OBJECT_ID('dbo.ref_years', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ref_years (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        val VARCHAR(100) NOT NULL UNIQUE
+    );
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.ref_years)
+BEGIN
+    INSERT INTO dbo.ref_years (val) VALUES ('2023'), ('2024'), ('2025'), ('2026'), ('2027');
+END;
+
+-- Table 7: ref_breakdown_reasons
+IF OBJECT_ID('dbo.ref_breakdown_reasons', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ref_breakdown_reasons (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        val VARCHAR(100) NOT NULL UNIQUE
+    );
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.ref_breakdown_reasons)
+BEGIN
+    INSERT INTO dbo.ref_breakdown_reasons (val) VALUES ('Mechanical'), ('Electrical'), ('Pneumatic'), ('Hydraulic'), ('Sensor Failure'), ('Heater Band Burnout');
+END;
+
+-- Table 8: ref_idle_reasons
+IF OBJECT_ID('dbo.ref_idle_reasons', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ref_idle_reasons (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        val VARCHAR(100) NOT NULL UNIQUE
+    );
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.ref_idle_reasons)
+BEGIN
+    INSERT INTO dbo.ref_idle_reasons (val) VALUES ('No Material'), ('No Operator'), ('Power Interruption'), ('Core Shortage'), ('Routine Clean-up'), ('Awaiting Maintenance Handover');
 END;
 
 

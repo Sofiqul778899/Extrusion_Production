@@ -22,6 +22,64 @@ INSERT INTO app_config (config_key, config_value) VALUES
 ('sample_settings', '{"LAST_SAMPLE_SERIAL": 0}')
 ON CONFLICT (config_key) DO NOTHING;
 
+INSERT INTO app_config (config_key, config_value) VALUES 
+('dropdowns', '{"shifts": ["Day", "Night", "A", "B", "C"], "productionTypes": ["Commercial", "R&D", "Trial", "Sample"], "uoms": ["Kgs", "Rolls", "Meter", "INCH"], "materials": ["LDPE", "HDPE", "LLDPE", "PP", "BOPP"], "inlinePrintOptions": ["Yes", "No"], "years": ["2023", "2024", "2025", "2026", "2027"], "breakdownReasons": ["Mechanical", "Electrical", "Pneumatic", "Hydraulic", "Sensor Failure", "Heater Band Burnout"], "idleReasons": ["No Material", "No Operator", "Power Interruption", "Core Shortage", "Routine Clean-up", "Awaiting Maintenance Handover"]}')
+ON CONFLICT (config_key) DO NOTHING;
+
+
+-- --------------------------------------------------------------------
+-- Reference Tables (dropdowns in separate tables)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ref_shifts (
+    id SERIAL PRIMARY KEY,
+    val VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS ref_production_types (
+    id SERIAL PRIMARY KEY,
+    val VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS ref_uoms (
+    id SERIAL PRIMARY KEY,
+    val VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS ref_materials (
+    id SERIAL PRIMARY KEY,
+    val VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS ref_inline_print_options (
+    id SERIAL PRIMARY KEY,
+    val VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS ref_years (
+    id SERIAL PRIMARY KEY,
+    val VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS ref_breakdown_reasons (
+    id SERIAL PRIMARY KEY,
+    val VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS ref_idle_reasons (
+    id SERIAL PRIMARY KEY,
+    val VARCHAR(100) NOT NULL UNIQUE
+);
+
+-- Seed Reference Data
+INSERT INTO ref_shifts (val) VALUES ('Day'), ('Night'), ('A'), ('B'), ('C') ON CONFLICT (val) DO NOTHING;
+INSERT INTO ref_production_types (val) VALUES ('Commercial'), ('R&D'), ('Trial'), ('Sample') ON CONFLICT (val) DO NOTHING;
+INSERT INTO ref_uoms (val) VALUES ('Kgs'), ('Rolls'), ('Meter'), ('INCH') ON CONFLICT (val) DO NOTHING;
+INSERT INTO ref_materials (val) VALUES ('LDPE'), ('HDPE'), ('LLDPE'), ('PP'), ('BOPP') ON CONFLICT (val) DO NOTHING;
+INSERT INTO ref_inline_print_options (val) VALUES ('Yes'), ('No') ON CONFLICT (val) DO NOTHING;
+INSERT INTO ref_years (val) VALUES ('2023'), ('2024'), ('2025'), ('2026'), ('2027') ON CONFLICT (val) DO NOTHING;
+INSERT INTO ref_breakdown_reasons (val) VALUES ('Mechanical'), ('Electrical'), ('Pneumatic'), ('Hydraulic'), ('Sensor Failure'), ('Heater Band Burnout') ON CONFLICT (val) DO NOTHING;
+INSERT INTO ref_idle_reasons (val) VALUES ('No Material'), ('No Operator'), ('Power Interruption'), ('Core Shortage'), ('Routine Clean-up'), ('Awaiting Maintenance Handover') ON CONFLICT (val) DO NOTHING;
+
 
 -- --------------------------------------------------------------------
 -- Table: operators (Operator Master Data)

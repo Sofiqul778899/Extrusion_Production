@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from 'node:url';
 import * as XLSX from "xlsx";
-import { query, initializeDatabase, isFallbackMode } from "./db.js";
+import { query, initializeDatabase, isFallbackMode, isMSSQL } from "./db.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -269,22 +269,94 @@ app.get("/api/health", safeHandler(async (req, res) => {
 
 // Master Store / Dropdowns
 app.get("/api/master-store", safeHandler(async (req, res) => {
-  const resConfig = await query("SELECT config_value FROM app_config WHERE config_key = 'dropdowns'");
-  if (resConfig.rows.length > 0) {
-    return res.json({ ...DEFAULT_DROPDOWNS, ...resConfig.rows[0].config_value });
+  const tableKeys = {
+    shifts: 'ref_shifts',
+    productionTypes: 'ref_production_types',
+    uoms: 'ref_uoms',
+    materials: 'ref_materials',
+    inlinePrintOptions: 'ref_inline_print_options',
+    years: 'ref_years',
+    breakdownReasons: 'ref_breakdown_reasons',
+    idleReasons: 'ref_idle_reasons'
+  };
+
+  const store: any = {};
+  
+  for (const [key, table] of Object.entries(tableKeys)) {
+    try {
+      const result = await query(`SELECT val FROM ${table} ORDER BY id ASC`);
+      store[key] = result.rows.map(r => r.val);
+    } catch (err: any) {
+      console.warn(`Failed to fetch from ${table}, using default/fallback:`, err.message);
+      store[key] = DEFAULT_DROPDOWNS[key as keyof typeof DEFAULT_DROPDOWNS];
+    }
   }
-  res.json(DEFAULT_DROPDOWNS);
+
+  // Ensure all keys are populated (if empty in table)
+  for (const key of Object.keys(DEFAULT_DROPDOWNS)) {
+    if (!store[key] || store[key].length === 0) {
+      store[key] = DEFAULT_DROPDOWNS[key as keyof typeof DEFAULT_DROPDOWNS];
+    }
+  }
+
+  res.json(store);
 }));
 
 app.post("/api/master-store", safeHandler(async (req, res) => {
   const masterStore = req.body;
-  await query(
-    `INSERT INTO app_config (config_key, config_value) 
-     VALUES ('dropdowns', $1) 
-     ON CONFLICT (config_key) 
-     DO UPDATE SET config_value = EXCLUDED.config_value`,
-    [JSON.stringify(masterStore)]
-  );
+  const tableKeys = {
+    shifts: 'ref_shifts',
+    productionTypes: 'ref_production_types',
+    uoms: 'ref_uoms',
+    materials: 'ref_materials',
+    inlinePrintOptions: 'ref_inline_print_options',
+    years: 'ref_years',
+    breakdownReasons: 'ref_breakdown_reasons',
+    idleReasons: 'ref_idle_reasons'
+  };
+
+  for (const [key, table] of Object.entries(tableKeys)) {
+    const items = masterStore[key];
+    if (Array.isArray(items)) {
+      try {
+        // Clear old entries
+        await query(`DELETE FROM ${table}`);
+        
+        // Insert new entries
+        for (const item of items) {
+          if (item && typeof item === 'string' && item.trim() !== '') {
+            await query(`INSERT INTO ${table} (val) VALUES ($1)`, [item.trim()]);
+          }
+        }
+      } catch (err: any) {
+        console.error(`Error updating table ${table}:`, err.message);
+      }
+    }
+  }
+
+  // Also keep app_config in sync as fallback
+  try {
+    if (isMSSQL) {
+      await query(
+        `IF EXISTS (SELECT 1 FROM dbo.app_config WHERE config_key = 'dropdowns')
+           UPDATE dbo.app_config SET config_value = $1 WHERE config_key = 'dropdowns'
+         ELSE
+           INSERT INTO dbo.app_config (config_key, config_value) VALUES ('dropdowns', $1);`,
+        [JSON.stringify(masterStore)]
+      );
+    } else {
+      await query(
+        `INSERT INTO app_config (config_key, config_value) 
+         VALUES ('dropdowns', $1) 
+         ON CONFLICT (config_key) 
+         DO UPDATE SET config_value = EXCLUDED.config_value`,
+        [JSON.stringify(masterStore)]
+      );
+    }
+  } catch (e: any) {
+    console.warn("Could not sync app_config 'dropdowns' key:", e.message);
+  }
+
   res.json({ message: "Master Store updated successfully", masterStore });
 }));
 
