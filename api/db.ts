@@ -1,42 +1,14 @@
-import pg from 'pg';
+import 'dotenv/config';
 import mssql from 'mssql';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const { Pool } = pg;
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// PostgreSQL Connection configuration
-const connectionString = process.env.DATABASE_URL;
-
-export const pool = connectionString
-  ? new Pool({ 
-      connectionString,
-      ssl: connectionString.includes('localhost') || connectionString.includes('127.0.0.1') ? false : { rejectUnauthorized: false },
-      connectionTimeoutMillis: 2000,
-      max: 20,
-      idleTimeoutMillis: 10000
-    })
-  : new Pool({
-      host: process.env.PGHOST || 'localhost',
-      port: parseInt(process.env.PGPORT || '5432', 10),
-      user: process.env.PGUSER || 'postgres',
-      password: process.env.PGPASSWORD || 'secret',
-      database: process.env.PGDATABASE || 'extrusion_production',
-      ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
-      connectionTimeoutMillis: 2000,
-      max: 20,
-      idleTimeoutMillis: 10000
-    });
-
 export let isFallbackMode = false;
-export const isMSSQL = process.env.DB_TYPE === 'mssql' || 
-                        !!process.env.MSSQL_CONNECTION_STRING || 
-                        !!process.env.MSSQL_HOST || 
-                        !!process.env.MSSQL_SERVER;
+export const isMSSQL = true;
 
 // MSSQL Pool initialization
 let mssqlPool: mssql.ConnectionPool | null = null;
@@ -44,39 +16,125 @@ let mssqlPool: mssql.ConnectionPool | null = null;
 async function getMSSQLPool() {
   if (mssqlPool) return mssqlPool;
   
-  const config: any = process.env.MSSQL_CONNECTION_STRING
-    ? process.env.MSSQL_CONNECTION_STRING
-    : {
-        server: process.env.MSSQL_HOST || process.env.MSSQL_SERVER || 'localhost',
-        port: parseInt(process.env.MSSQL_PORT || '1433', 10),
-        user: process.env.MSSQL_USER || 'sa',
-        password: process.env.MSSQL_PASSWORD,
-        database: process.env.MSSQL_DATABASE || 'Extrusion_DB',
-        options: {
-          encrypt: process.env.MSSQL_ENCRYPT === 'true', 
-          trustServerCertificate: process.env.MSSQL_TRUST_CERT !== 'false' // True by default for local development
-        },
-        connectionTimeout: 5000,
-        requestTimeout: 15000,
-        pool: {
-          max: 10,
-          min: 0,
-          idleTimeoutMillis: 30000
-        }
-      };
+  const rawConnStr = process.env.MSSQL_CONNECTION_STRING;
+  const rawServer = process.env.MSSQL_HOST || process.env.MSSQL_SERVER || 'localhost';
+  const instanceName = process.env.MSSQL_INSTANCE_NAME;
+  const database = process.env.MSSQL_DATABASE || 'Extrusion_DB';
+  const user = process.env.MSSQL_USER || 'sa';
+  const password = process.env.MSSQL_PASSWORD;
+  const port = parseInt(process.env.MSSQL_PORT || '1433', 10);
 
-  console.log('[MSSQL] Connecting to SQL Server...');
-  mssqlPool = await new mssql.ConnectionPool(config).connect();
-  console.log('[MSSQL] Connected to Microsoft SQL Server database successfully.');
-  return mssqlPool;
-}
+  const normalizeConnStr = (cs: string) => {
+    return cs
+      .replace(/Data Source=/gi, 'Server=')
+      .replace(/Initial Catalog=/gi, 'Database=')
+      .replace(/User ID=/gi, 'User Id=')
+      .replace(/Trust Server Certificate=/gi, 'TrustServerCertificate=')
+      .replace(/Integrated Security=True/gi, 'Trusted_Connection=Yes')
+      .replace(/Integrated Security=SSPI/gi, 'Trusted_Connection=Yes');
+  };
 
-pool.on('error', (err) => {
-  console.error('[PostgreSQL] Unexpected error on idle client:', err);
-  if (!isMSSQL) {
-    isFallbackMode = true;
+  const connStr = rawConnStr ? normalizeConnStr(rawConnStr) : null;
+
+  if (connStr && (connStr.includes('YOUR_ACTUAL_PASSWORD') || connStr.includes('YOUR_PASSWORD') || (password && password.includes('YOUR_')))) {
+    console.warn('[MSSQL] Notice: Placeholder password detected in .env file. Please replace YOUR_ACTUAL_PASSWORD in .env with your real SQL Server / LocalDB password.');
   }
-});
+
+  const isLocalDB = (rawConnStr && rawConnStr.toLowerCase().includes('localdb')) || 
+                    rawServer.toLowerCase().includes('localdb');
+
+  // Strategy 1: Connection string provided
+  if (connStr) {
+    console.log('[MSSQL] Attempting connection using MSSQL_CONNECTION_STRING...');
+    
+    // Attempt 1a: Standard driver with normalized string
+    try {
+      mssqlPool = await new mssql.ConnectionPool(connStr).connect();
+      console.log('[MSSQL] Connected successfully via MSSQL_CONNECTION_STRING (Standard driver).');
+      return mssqlPool;
+    } catch (err: any) {
+      console.warn('[MSSQL] Standard driver connection string failed:', err?.message || err);
+    }
+
+    // Attempt 1b: Native msnodesqlv8 driver (for Windows Auth / LocalDB / ODBC)
+    try {
+      console.log('[MSSQL] Trying msnodesqlv8 native driver with connection string...');
+      const mssqlMS = await import('mssql/msnodesqlv8').then(m => m.default || m);
+      mssqlPool = await new mssqlMS.ConnectionPool({ connectionString: connStr } as any).connect();
+      console.log('[MSSQL] Connected successfully via msnodesqlv8 driver.');
+      return mssqlPool;
+    } catch (msErr: any) {
+      console.warn('[MSSQL] Native msnodesqlv8 driver connection failed:', msErr?.message || msErr);
+    }
+  }
+
+  // Strategy 2: LocalDB explicit handling
+  if (isLocalDB) {
+    const localDbInstance = instanceName || (rawServer.includes('\\') ? rawServer.split('\\')[1] : 'MSSQLLocalDB');
+    const localDbConnStr = `Server=(localdb)\\${localDbInstance};Database=${database};Trusted_Connection=Yes;TrustServerCertificate=True;`;
+    console.log(`[MSSQL] LocalDB detected. Connecting via msnodesqlv8 with: ${localDbConnStr}`);
+    try {
+      const mssqlMS = await import('mssql/msnodesqlv8').then(m => m.default || m);
+      mssqlPool = await new mssqlMS.ConnectionPool({ connectionString: localDbConnStr } as any).connect();
+      console.log('[MSSQL] Connected to LocalDB successfully.');
+      return mssqlPool;
+    } catch (err: any) {
+      console.warn('[MSSQL] LocalDB native connection attempt failed:', err?.message || err);
+    }
+  }
+
+  // Strategy 3: Standard TCP/IP host attempts
+  let cleanHost = rawServer;
+  let targetInstance = instanceName;
+  if (cleanHost.includes('\\')) {
+    const parts = cleanHost.split('\\');
+    cleanHost = parts[0];
+    if (!targetInstance) targetInstance = parts[1];
+  }
+  if (cleanHost.toLowerCase() === '(localdb)' || cleanHost === '.') {
+    cleanHost = '127.0.0.1';
+  }
+
+  const hostsToTry: string[] = [];
+  if (cleanHost && cleanHost.toLowerCase() !== '(localdb)') hostsToTry.push(cleanHost);
+  if (!hostsToTry.includes('127.0.0.1')) hostsToTry.push('127.0.0.1');
+  if (!hostsToTry.includes('localhost')) hostsToTry.push('localhost');
+
+  let lastErr: any = null;
+  for (const host of hostsToTry) {
+    const config: mssql.config = {
+      server: host,
+      port,
+      user,
+      password,
+      database,
+      options: {
+        encrypt: process.env.MSSQL_ENCRYPT === 'true', 
+        trustServerCertificate: process.env.MSSQL_TRUST_CERT !== 'false',
+        ...(targetInstance ? { instanceName: targetInstance } : {})
+      },
+      connectionTimeout: 8000,
+      requestTimeout: 15000,
+      pool: {
+        max: 10,
+        min: 0,
+        idleTimeoutMillis: 30000
+      }
+    };
+
+    try {
+      console.log(`[MSSQL] Connecting via TCP to ${host}:${port} (db: ${database}, user: ${user})...`);
+      mssqlPool = await new mssql.ConnectionPool(config).connect();
+      console.log('[MSSQL] Connected to Microsoft SQL Server database successfully via TCP.');
+      return mssqlPool;
+    } catch (err: any) {
+      lastErr = err;
+      console.warn(`[MSSQL] Connection attempt failed for ${host}:`, err?.message || err);
+    }
+  }
+
+  throw lastErr;
+}
 
 const fallbackFilePath = path.join(process.cwd(), 'api', 'db_fallback.json');
 
@@ -108,6 +166,7 @@ const INITIAL_FALLBACK_DB = {
     { machine_no: 'M-04', type: 'Blown Film Extrusion', target_kgs: 800.00, status: 'Running', reason: '', num_idle: 0, num_breakdown: 0, idle_time: 0, breakdown_time: 0, last_status_change: new Date().toISOString() },
     { machine_no: 'M-05', type: 'Monolayer Extrusion', target_kgs: 600.00, status: 'Running', reason: '', num_idle: 0, num_breakdown: 0, idle_time: 0, breakdown_time: 0, last_status_change: new Date().toISOString() }
   ],
+  machine_list: ['M-01', 'M-02', 'M-03', 'M-04', 'M-05'],
   pending_orders: [] as any[],
   production_records: [] as any[],
   machine_logs: [] as any[],
@@ -196,6 +255,44 @@ function mapRecordToPascal(r: any) {
 }
 
 export async function runFallbackQuery(text: string, params?: any[]): Promise<any> {
+  // machine_list queries
+  if (text.includes("FROM machine_list") || text.includes("FROM dbo.machine_list")) {
+    const db = readFallbackDb();
+    if (!db.machine_list) {
+      db.machine_list = ['M-01', 'M-02', 'M-03', 'M-04', 'M-05'];
+      writeFallbackDb(db);
+    }
+    return { rows: db.machine_list.map((m: string) => ({ machine_no: m, id: m, val: m })) };
+  }
+
+  if (text.includes("INSERT INTO machine_list") || text.includes("INSERT INTO dbo.machine_list")) {
+    const val = params ? params[0] : null;
+    if (val) {
+      const db = readFallbackDb();
+      if (!db.machine_list) {
+        db.machine_list = ['M-01', 'M-02', 'M-03', 'M-04', 'M-05'];
+      }
+      if (!db.machine_list.includes(val)) {
+        db.machine_list.push(val);
+        writeFallbackDb(db);
+      }
+    }
+    return { rows: [], rowCount: 1 };
+  }
+
+  if (text.includes("DELETE FROM machine_list") || text.includes("DELETE FROM dbo.machine_list")) {
+    const val = params ? params[0] : null;
+    const db = readFallbackDb();
+    if (val && db.machine_list) {
+      db.machine_list = db.machine_list.filter((m: string) => m !== val);
+      writeFallbackDb(db);
+    } else {
+      db.machine_list = [];
+      writeFallbackDb(db);
+    }
+    return { rows: [], rowCount: 1 };
+  }
+
   // Check for SELECT from ref_ tables
   if (text.includes("SELECT val FROM ref_")) {
     const match = text.match(/FROM\s+(ref_\w+)/i);
@@ -889,180 +986,85 @@ export async function query(text: string, params?: any[]) {
   if (isFallbackMode) {
     return runFallbackQuery(text, params);
   }
-  if (isMSSQL) {
-    try {
-      return await runMSSQLQuery(text, params);
-    } catch (err: any) {
-      const isConnError = err.message.includes('ECONNREFUSED') || 
-                          err.message.includes('ETIMEDOUT') || 
-                          err.message.includes('ENOTFOUND') || 
-                          err.message.includes('connection') ||
-                          err.message.includes('ConnectionError') ||
-                          err.message.includes('socket');
-      if (isConnError) {
-        console.warn('[MSSQL] Connection refused or lost. Enabling local JSON file-based database fallback.', err.message);
-        isFallbackMode = true;
-        return runFallbackQuery(text, params);
-      }
-      throw err;
-    }
-  }
   try {
-    const start = Date.now();
-    const res = await pool.query(text, params);
-    const duration = Date.now() - start;
-    return res;
+    return await runMSSQLQuery(text, params);
   } catch (err: any) {
     const isConnError = err.message.includes('ECONNREFUSED') || 
                         err.message.includes('ETIMEDOUT') || 
                         err.message.includes('ENOTFOUND') || 
-                        err.message.includes('connection');
+                        err.message.includes('connection') ||
+                        err.message.includes('ConnectionError') ||
+                        err.message.includes('socket');
     if (isConnError) {
-      console.warn('[PostgreSQL] Connection refused or lost. Enabling local JSON file-based database fallback.', err.message);
+      console.warn('[MSSQL] Connection refused or lost. Enabling local JSON file-based database fallback.', err.message);
       isFallbackMode = true;
       return runFallbackQuery(text, params);
     }
-    console.error('[PostgreSQL] Query execution error:', err.message, '\nQuery:', text);
     throw err;
   }
 }
 
 // Automatically create tables if they do not exist
 export async function initializeDatabase() {
-  if (isMSSQL) {
-    console.log('[MSSQL] Initializing SQL Server database connection...');
-    try {
-      const mPool = await getMSSQLPool();
-      const testRes = await mPool.request().query("SELECT 1 AS ok");
-      console.log('[MSSQL] Database server is reachable and online.');
-    } catch (err: any) {
-      console.warn('[MSSQL] Database connection failed:', err.message);
-      console.warn('[MSSQL] Switched to local persistent JSON file-based database fallback.');
-      isFallbackMode = true;
-      readFallbackDb();
-      return;
-    }
-
-    try {
-      // Check if core table exists in MSSQL
-      const checkRes = await runMSSQLQuery(`
-        SELECT CASE WHEN EXISTS (
-          SELECT * FROM INFORMATION_SCHEMA.TABLES 
-          WHERE TABLE_NAME = 'production_records'
-        ) THEN 1 ELSE 0 END AS [exists]
-      `);
-      
-      const tablesExist = checkRes.rows[0]?.exists;
-      if (tablesExist) {
-        console.log('[MSSQL] Core tables already exist. Ready to operate.');
-        return;
-      }
-
-      console.log('[MSSQL] Core tables do not exist. Bootstrapping MS SQL Server schema...');
-      
-      const schemaPath = path.join(process.cwd(), 'mssql_schema.sql');
-      if (!fs.existsSync(schemaPath)) {
-        console.warn('[MSSQL] mssql_schema.sql not found at:', schemaPath);
-        return;
-      }
-
-      const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-      
-      // SQL Server statements can be executed as a single multi-statement batch
-      const mPool = await getMSSQLPool();
-      await mPool.request().query(schemaSql);
-      
-      console.log('[MSSQL] Microsoft SQL Server Database bootstrapping completed successfully.');
-    } catch (err: any) {
-      console.error('[MSSQL] Database initialization failed:', err.message);
-    }
-    return;
-  }
-
-  console.log('[PostgreSQL] Initializing database...');
+  console.log('[MSSQL] Initializing SQL Server database connection...');
   try {
-    // Ping test
-    await pool.query("SELECT 1");
-    console.log('[PostgreSQL] Database server is reachable.');
+    const mPool = await getMSSQLPool();
+    await mPool.request().query("SELECT 1 AS ok");
+    console.log('[MSSQL] Database server is reachable and online.');
   } catch (err: any) {
-    console.warn('[PostgreSQL] Database connection failed:', err.message);
-    console.warn('[PostgreSQL] Switched to local persistent JSON file-based database fallback.');
+    console.warn('[MSSQL] Database connection failed:', err.message);
+    console.warn('[MSSQL] Switched to local persistent JSON file-based database fallback.');
     isFallbackMode = true;
     readFallbackDb();
     return;
   }
 
   try {
-    const checkRes = await pool.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'production_records'
-      );
+    // Check if core table exists in MSSQL
+    const checkRes = await runMSSQLQuery(`
+      SELECT CASE WHEN EXISTS (
+        SELECT * FROM INFORMATION_SCHEMA.TABLES 
+        WHERE TABLE_NAME = 'production_records'
+      ) THEN 1 ELSE 0 END AS [exists]
     `);
     
     const tablesExist = checkRes.rows[0]?.exists;
     if (tablesExist) {
-      console.log('[PostgreSQL] Core tables already exist. Ensuring performance indexes are in place...');
-      // Ensure crucial indexes are created for maximum performance
-      const fastIndexes = [
-        `CREATE INDEX IF NOT EXISTS idx_prod_entry_timestamp ON production_records(entry_timestamp DESC);`,
-        `CREATE INDEX IF NOT EXISTS idx_prod_type ON production_records(production_type);`,
-        `CREATE INDEX IF NOT EXISTS idx_prod_operator ON production_records(operator_id);`,
-        `CREATE INDEX IF NOT EXISTS idx_prod_operator_name ON production_records(operator_name);`,
-        `CREATE INDEX IF NOT EXISTS idx_mlogs_times ON machine_logs(start_time DESC, end_time);`,
-        `CREATE INDEX IF NOT EXISTS idx_prod_date ON production_records(production_date);`,
-        `CREATE INDEX IF NOT EXISTS idx_prod_machine ON production_records(machine_no);`,
-        `CREATE INDEX IF NOT EXISTS idx_prod_pi ON production_records(pi_number);`,
-        `CREATE INDEX IF NOT EXISTS idx_mlogs_machine ON machine_logs(machine_no);`,
-        `CREATE INDEX IF NOT EXISTS idx_mlogs_status ON machine_logs(status);`,
-        `CREATE INDEX IF NOT EXISTS idx_mstats_date ON machine_daily_stats(date);`,
-        `CREATE INDEX IF NOT EXISTS idx_mstats_machine ON machine_daily_stats(machine_no);`
-      ];
-      for (const idxSql of fastIndexes) {
-        try {
-          await pool.query(idxSql);
-        } catch (err: any) {
-          console.warn('[PostgreSQL] Failed to verify/create index:', err.message);
-        }
+      console.log('[MSSQL] Core tables already exist. Ensuring machine_list table exists...');
+      try {
+        await runMSSQLQuery(`
+          IF OBJECT_ID('dbo.machine_list', 'U') IS NULL
+          BEGIN
+              CREATE TABLE dbo.machine_list (
+                  id INT IDENTITY(1,1) PRIMARY KEY,
+                  machine_no VARCHAR(100) NOT NULL UNIQUE,
+                  created_at DATETIME2 DEFAULT GETDATE()
+              );
+              INSERT INTO dbo.machine_list (machine_no) VALUES ('M-01'), ('M-02'), ('M-03'), ('M-04'), ('M-05');
+          END;
+        `);
+      } catch (err: any) {
+        console.warn('[MSSQL] Could not check/create machine_list table:', err.message);
       }
-      console.log('[PostgreSQL] Performance indexes verified successfully.');
       return;
     }
 
-    console.log('[PostgreSQL] Core tables do not exist. Bootstrapping schema...');
+    console.log('[MSSQL] Core tables do not exist. Bootstrapping MS SQL Server schema...');
     
-    const schemaPath = path.join(process.cwd(), 'schema.sql');
+    const schemaPath = path.join(process.cwd(), 'mssql_schema.sql');
     if (!fs.existsSync(schemaPath)) {
-      console.warn('[PostgreSQL] schema.sql not found at:', schemaPath);
+      console.warn('[MSSQL] mssql_schema.sql not found at:', schemaPath);
       return;
     }
 
     const schemaSql = fs.readFileSync(schemaPath, 'utf8');
     
-    const statements = schemaSql
-      .split(';')
-      .map(statement => statement.trim())
-      .filter(statement => {
-        if (!statement) return false;
-        const lines = statement.split('\n');
-        const nonCommentLines = lines.filter(line => !line.trim().startsWith('--') && line.trim() !== '');
-        return nonCommentLines.length > 0;
-      });
-
-    console.log(`[PostgreSQL] Found ${statements.length} SQL statements to execute.`);
+    // SQL Server statements can be executed as a single multi-statement batch
+    const mPool = await getMSSQLPool();
+    await mPool.request().query(schemaSql);
     
-    for (let i = 0; i < statements.length; i++) {
-      const stmt = statements[i];
-      try {
-        await pool.query(stmt);
-      } catch (err: any) {
-        console.warn(`[PostgreSQL] Error running SQL statement ${i + 1}:`, err.message);
-      }
-    }
-    
-    console.log('[PostgreSQL] Database bootstrapping completed successfully.');
+    console.log('[MSSQL] Microsoft SQL Server Database bootstrapping completed successfully.');
   } catch (err: any) {
-    console.error('[PostgreSQL] Database initialization failed:', err.message);
+    console.error('[MSSQL] Database initialization failed:', err.message);
   }
 }

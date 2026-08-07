@@ -1,0 +1,206 @@
+================================================================================
+          MPBL EXTRUSION PRODUCTION MANAGEMENT SYSTEM
+                 COMPLETE COMPREHENSIVE APP & ARCHITECTURE GUIDELINE
+================================================================================
+
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. Executive Overview & Business Scope
+2. System Architecture & Tech Stack
+3. Environment Setup & .env Configuration Guide
+4. LocalDB & SQL Server Management Studio (SSMS) Connection Guide
+5. Complete Database Schema & DDL Details
+6. Full Backend API Endpoint Reference
+7. Frontend UI Modules & Tab-by-Tab Functionality Breakdown
+8. Roll ID Auto-Generation & Serial Mechanism
+9. Resilient Dual-Engine Fallback Database System
+10. Blueprint Guide for Replicating Architecture in Future Apps
+11. Troubleshooting & Common Fixes Guide
+--------------------------------------------------------------------------------
+
+
+1. EXECUTIVE OVERVIEW & BUSINESS SCOPE
+--------------------------------------------------------------------------------
+This enterprise-grade application is designed for industrial manufacturing plants (specifically Blown Film Extrusion, Flexible Packaging, and Converting Facilities). It digitalizes and automates:
+
+- Daily Master Production Records Entry & Roll Tracking
+- Real-Time Machine Down-time & Breakdown Monitoring
+- Machine Target vs. Actual Yield Tracking & OEE KPI Metrics
+- Sample Production Batch Records
+- Dynamic Master Ref Data Management (Shifts, Operators, Materials, Downtime Reasons)
+- Excel / CSV Import & Export Capabilities
+
+
+2. SYSTEM ARCHITECTURAL STACK
+--------------------------------------------------------------------------------
+- Front-End Framework: React 18+ (Vite, TypeScript, Tailwind CSS)
+- UI Components: Lucide React Icons, Recharts Analytics, Motion Transitions
+- Back-End Engine: Express.js (Node.js/TypeScript)
+- Primary Database: Microsoft SQL Server / SQL Server LocalDB
+- Database Driver: `mssql` (tedious driver) with fallback support for `msnodesqlv8`
+- Failover Database: Resilient Local File-Based JSON Database (`api/db_fallback.json`)
+
+
+3. ENVIRONMENT SETUP & .env CONFIGURATION
+--------------------------------------------------------------------------------
+The application reads its environment variables from the root `/.env` file.
+
+Current Configuration for SSMS LocalDB `(localdb)\MPBLLocalDB` and Database `Extrusion_DB`:
+
+```env
+# Server Runtime
+PORT=3000
+NODE_ENV=development
+APP_URL=http://localhost:3000
+
+# Database Type Selection
+DB_TYPE="mssql"
+
+# Primary Connection String (Windows Authentication for LocalDB)
+MSSQL_CONNECTION_STRING="Server=(localdb)\MPBLLocalDB;Database=Extrusion_DB;Trusted_Connection=Yes;TrustServerCertificate=True;"
+
+# Alternative TCP/IP Connection String (For Full SQL Server with SA User):
+# MSSQL_CONNECTION_STRING="Server=127.0.0.1,1433;Database=Extrusion_DB;User Id=sa;Password=YOUR_REAL_PASSWORD;TrustServerCertificate=True;"
+
+# Fallback Individual Parameters
+MSSQL_SERVER="(localdb)\MPBLLocalDB"
+MSSQL_DATABASE="Extrusion_DB"
+```
+
+
+4. LOCALDB & SSMS CONNECTION STEP-BY-STEP GUIDE
+--------------------------------------------------------------------------------
+If you are running this app on a local Windows PC with SSMS (SQL Server Management Studio):
+
+Step 1: Verify LocalDB Instance in Windows Command Prompt (cmd)
+        `sqllocaldb info`
+        `sqllocaldb info MPBLLocalDB`
+
+Step 2: If `MPBLLocalDB` does not exist, create and start it:
+        `sqllocaldb create MPBLLocalDB`
+        `sqllocaldb start MPBLLocalDB`
+
+Step 3: Connect via SSMS:
+        - Server Name: `(localdb)\MPBLLocalDB`
+        - Authentication: Windows Authentication
+        - Create Database: Run `CREATE DATABASE Extrusion_DB;`
+
+Step 4: Launch the App:
+        `npm run dev`
+        The app will automatically detect SQL Server, connect, and execute `mssql_schema.sql` to create all tables if missing!
+
+
+5. COMPLETE DATABASE SCHEMA & DDL DETAILS
+--------------------------------------------------------------------------------
+The database schema consists of 8 core production tables and dynamic reference tables:
+
+1. `production_records`
+   - Primary Key: `roll_id` (NVARCHAR(50))
+   - Fields: production_date, shift, production_type, operator_id, operator_name, machine_no, year, pi_number, tube_size, uom, material, micron, in_line_print, finished_meter, finished_kgs, roll_location, scrap_kgs, machine_status, data_update_time, fingerprint, entered_by, production_year, production_month, retailer, customer, entry_timestamp.
+
+2. `machines`
+   - Primary Key: `machine_no` (NVARCHAR(50))
+   - Fields: type, target_kgs, status ('Running'|'Idle'|'Breakdown'), reason, num_idle, num_breakdown, idle_time, breakdown_time, last_status_change.
+
+3. `machine_logs`
+   - Primary Key: `id` (INT IDENTITY)
+   - Fields: machine_no, status, start_time, end_time, duration_mins, reason, breakdown_type.
+
+4. `machine_daily_stats`
+   - Primary Key: `id` (INT IDENTITY)
+   - Fields: machine_no, date, target_kgs, num_idle, num_breakdown, idle_time, breakdown_time.
+
+5. `operators`
+   - Primary Key: `operator_id` (NVARCHAR(50))
+   - Fields: name, email.
+
+6. `app_config`
+   - Primary Key: `config_key` (NVARCHAR(100))
+   - Fields: config_value (NVARCHAR(MAX) JSON payload storing roll settings, sample settings, dropdown lists).
+
+7. `pending_orders`
+   - Primary Key: `pi_number` (NVARCHAR(100))
+   - Fields: retailer, customer, imported_at.
+
+8. `ref_*` Tables (Dynamic dropdown reference tables):
+   - `ref_shifts`, `ref_production_types`, `ref_uoms`, `ref_materials`, `ref_inline_print_options`, `ref_years`, `ref_breakdown_reasons`, `ref_idle_reasons`.
+
+
+6. FULL BACKEND API ENDPOINTS REFERENCE
+--------------------------------------------------------------------------------
+- GET `/api/health`                    : Server & DB Health check
+- GET `/api/config`                    : Retrieve system configuration (Roll settings, Dropdowns)
+- POST `/api/config`                   : Save system configuration
+- GET `/api/production`                : Fetch production records (Supports date filtering)
+- POST `/api/production`               : Insert new production record
+- PUT `/api/production/:id`            : Update existing production record
+- GET `/api/machines`                  : Get machine list with live status & daily stats
+- PUT `/api/machines/:id/status`       : Toggle machine status (Running / Idle / Breakdown)
+- GET `/api/machine-logs`              : Fetch downtime and breakdown logs
+- DELETE `/api/machine-logs`           : Clear machine logs
+- GET `/api/operators`                 : Get operators list
+- POST `/api/operators`                : Add or update operator
+- GET `/api/pending-orders/current`    : Get last imported pending orders file metadata
+- GET `/api/pending-orders/list`       : List all imported pending orders from database
+- POST `/api/pending-orders/upload`    : Upload & smart-parse Excel/CSV pending orders into SQL DB
+- DELETE `/api/pending-orders/current` : Clear pending orders from database
+- POST `/api/ref/:tableName`           : Add master dropdown reference item
+- DELETE `/api/ref/:tableName`        : Remove master dropdown reference item
+
+
+7. FRONTEND UI MODULES BREAKDOWN
+--------------------------------------------------------------------------------
+[Tab 1] Real-Time Operations Dashboard:
+- Plant-wide summary metrics (Total Kgs, Total Meters, Scrap %, Active Machines)
+- Individual machine status cards with live downtime timers and status toggles
+- Instant Machine Breakdown / Maintenance logger popup
+
+[Tab 2] Master Production Entry Form:
+- Dynamic form with auto-suggest for PI numbers, Retailers, and Customers
+- Automatic calculation of Finished Kgs, Scrap Kgs, and Meter conversions
+- Automated Roll ID generation (e.g., R26-17413) upon submission
+
+[Tab 3] Production Records Data Table:
+- Search, filter by date range, shift, machine, or operator
+- Edit record modal and Excel export button
+
+[Tab 4] Sample Production Module:
+- Dedicated entry tracking for R&D and customer trial sample rolls
+
+[Tab 5] System Setup & Settings:
+- Operator management (Add / Remove Operators)
+- Roll Number prefix & starting index configuration
+- Ref dropdown data management (Add new Materials, Shift types, Reasons)
+
+
+8. RESILIENT DUAL-ENGINE FALLBACK SYSTEM
+--------------------------------------------------------------------------------
+To guarantee ZERO plant operational downtime, `api/db.ts` contains an automated fallback algorithm:
+
+1. When the server boots or executes a query, it attempts to connect to Microsoft SQL Server / LocalDB.
+2. If SQL Server is offline or unreachable, `isFallbackMode` automatically flips to `true`.
+3. In Fallback Mode, queries are seamlessly routed to `api/db_fallback.json` local persistent storage.
+4. When SQL Server comes back online, the app automatically switches back to SQL Server execution.
+
+
+9. REPLICATING ARCHITECTURE FOR FUTURE APPS
+--------------------------------------------------------------------------------
+To build a new application using this same architecture:
+
+1. Copy `.env` file and set your desired SQL Server connection string.
+2. Reuse `api/db.ts` for database connectivity and failover protection.
+3. Define your custom database schema in `mssql_schema.sql`.
+4. Run `npm run dev` — the Express server will boot, connect to SQL Server, bootstrap tables automatically, and serve your React app!
+
+
+10. TROUBLESHOOTING & COMMON FIXES
+--------------------------------------------------------------------------------
+- Error: `listen EADDRINUSE: address already in use 0.0.0.0:3000`
+  Fix: Port 3000 is occupied. Terminate old node process or run `killall node`.
+
+- Error: `Could not connect (sequence) / ECONNREFUSED`
+  Fix: SQL Server or LocalDB is not started. Run `sqllocaldb start MPBLLocalDB` or check SQL Server Windows Service. The app will automatically fallback to JSON storage so you can keep testing seamlessly!
+
+================================================================================
+                          DOCUMENTATION COMPLETE
+================================================================================

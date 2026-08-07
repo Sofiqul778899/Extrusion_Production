@@ -163,6 +163,20 @@ BEGIN
     INSERT INTO dbo.ref_idle_reasons (val) VALUES ('No Material'), ('No Operator'), ('Power Interruption'), ('Core Shortage'), ('Routine Clean-up'), ('Awaiting Maintenance Handover');
 END;
 
+-- Table 9: machine_list
+IF OBJECT_ID('dbo.machine_list', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.machine_list (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        machine_no VARCHAR(100) NOT NULL UNIQUE,
+        created_at DATETIME2 DEFAULT GETDATE()
+    );
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.machine_list)
+BEGIN
+    INSERT INTO dbo.machine_list (machine_no) VALUES ('M-01'), ('M-02'), ('M-03'), ('M-04'), ('M-05');
+END;
+
 
 -- 2. Table: operators
 IF OBJECT_ID('dbo.operators', 'U') IS NULL

@@ -293,10 +293,10 @@ export default function PendingOrderPage({
                     
                     <div className="w-full p-4 rounded-xl bg-emerald-50 border border-emerald-100 text-slate-700 text-xs font-medium space-y-1">
                       <p className="font-bold text-emerald-800 flex items-center gap-1.5 uppercase tracking-wide text-[9px]">
-                        <CheckCircle2 size={12} className="text-emerald-600" /> Secure Firestore Storage
+                        <CheckCircle2 size={12} className="text-emerald-600" /> Secure SQL Database Storage
                       </p>
                       <p className="text-[11px] leading-relaxed text-slate-600">
-                        Pending orders are saved locally in Firestore. These are automatically matched to PI Numbers during production data entry.
+                        Pending orders are saved directly in your SQL database (`pending_orders` table). These are automatically matched to PI Numbers during production data entry.
                       </p>
                     </div>
 

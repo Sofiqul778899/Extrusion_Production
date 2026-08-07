@@ -202,7 +202,8 @@ export default function App() {
     inlinePrintOptions: ['Yes', 'No'],
     years: ['2023', '2024', '2025', '2026', '2027'],
     breakdownReasons: ['Mechanical', 'Electrical', 'Pneumatic', 'Hydraulic', 'Sensor Failure', 'Heater Band Burnout'],
-    idleReasons: ['No Material', 'No Operator', 'Power Interruption', 'Core Shortage', 'Routine Clean-up', 'Awaiting Maintenance Handover']
+    idleReasons: ['No Material', 'No Operator', 'Power Interruption', 'Core Shortage', 'Routine Clean-up', 'Awaiting Maintenance Handover'],
+    machineList: ['M-01', 'M-02', 'M-03', 'M-04', 'M-05']
   });
 
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -1290,10 +1291,6 @@ export default function App() {
                activeTab === 'master-production-record' ? 'Production Record' : 
                activeTab === 'sample-production' ? 'Sample Production' : 'System Setup'}
             </h2>
-            <div className="flex items-center gap-2 px-2 py-0.5 rounded bg-emerald-50 border border-emerald-100">
-               <Database size={10} className="text-emerald-500" />
-               <span className="text-[9px] font-black text-emerald-600 uppercase tracking-tighter">Firestore Active</span>
-            </div>
             <div className="h-4 w-[1px] bg-slate-200" />
             <div className="flex items-center gap-2 text-slate-400 text-[10px] font-mono font-bold uppercase">
               <Clock size={14} className="text-brand-primary" />
@@ -1755,7 +1752,7 @@ export default function App() {
                             <InputField label="Operator Name" name="OperatorName" value={formData.OperatorName} onChange={handleInputChange} icon={<UserIcon size={14} />} placeholder="Name" />
                           </div>
                         </div>
-                        <SelectField label="Machine No" name="MachineNo" value={formData.MachineNo} onChange={handleInputChange} options={machines.map(m => m.id)} icon={<Container size={14} />} placeholder="Type Here" />
+                        <SelectField label="Machine No" name="MachineNo" value={formData.MachineNo} onChange={handleInputChange} options={masterStore.machineList && masterStore.machineList.length > 0 ? masterStore.machineList : machines.map(m => m.id)} icon={<Container size={14} />} placeholder="Type Here" />
                         
                         <SelectField label="Year" name="Year" value={formData.Year} onChange={handleInputChange} options={masterStore.years} icon={<CalendarIcon size={14} />} placeholder="Type Here" clearable={false} />
                         <InputField label="PI Number" name="PINumber" value={formData.PINumber} onChange={handleInputChange} icon={<Hash size={14} />} placeholder="Type Here" />
@@ -3391,10 +3388,12 @@ export default function App() {
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-4 focus:ring-brand-primary/20 focus:border-brand-primary"
                       >
                         <option value="">Select Machine</option>
-                        {editingEntry.MachineNo && !machines.some((m: any) => m.id === editingEntry.MachineNo) && (
+                        {editingEntry.MachineNo && !(masterStore.machineList || []).includes(editingEntry.MachineNo) && (
                           <option value={editingEntry.MachineNo}>{editingEntry.MachineNo}</option>
                         )}
-                        {machines.map((m: any) => <option key={m.id} value={m.id}>{m.id}</option>)}
+                        {(masterStore.machineList && masterStore.machineList.length > 0 ? masterStore.machineList : machines.map((m: any) => m.id)).map((m: string) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
                       </select>
                     </div>
 

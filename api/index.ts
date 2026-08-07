@@ -63,27 +63,33 @@ export function cleanPi(pi: string): string {
 export function getMatchedDetails(piDetailsList: any[], piVal: string): { retailer: string, customer: string } {
   if (!piVal || !piDetailsList || piDetailsList.length === 0) return { retailer: '', customer: '' };
   
+  const getItemPi = (item: any) => String(item.pi_number || item.PINumber || item.pi || '').trim();
+  const getItemRetailer = (item: any) => String(item.retailer || item.Retailer || '').trim();
+  const getItemCustomer = (item: any) => String(item.customer || item.Customer || '').trim();
+
   const upper = piVal.trim().toUpperCase();
-  const matchedExact = piDetailsList.find(d => d.pi_number.toUpperCase() === upper);
+  const matchedExact = piDetailsList.find(d => getItemPi(d).toUpperCase() === upper);
   if (matchedExact) {
-    return { retailer: matchedExact.retailer || '', customer: matchedExact.customer || '' };
+    return { retailer: getItemRetailer(matchedExact), customer: getItemCustomer(matchedExact) };
   }
   
   const cleanTarget = cleanPi(piVal);
-  const matchedClean = piDetailsList.find(d => cleanPi(d.pi_number) === cleanTarget);
+  const matchedClean = piDetailsList.find(d => cleanPi(getItemPi(d)) === cleanTarget);
   if (matchedClean) {
-    return { retailer: matchedClean.retailer || '', customer: matchedClean.customer || '' };
+    return { retailer: getItemRetailer(matchedClean), customer: getItemCustomer(matchedClean) };
   }
   
   const baseMatch = piVal.match(/MPBL\/0*(\d+)/i) || piVal.match(/0*(\d+)/);
   if (baseMatch) {
     const base = baseMatch[1];
     const matchedBase = piDetailsList.find(d => {
-      const dbBaseMatch = d.pi_number.match(/MPBL\/0*(\d+)/i) || d.pi_number.match(/0*(\d+)/);
+      const piStr = getItemPi(d);
+      if (!piStr) return false;
+      const dbBaseMatch = piStr.match(/MPBL\/0*(\d+)/i) || piStr.match(/0*(\d+)/);
       return dbBaseMatch && dbBaseMatch[1] === base;
     });
     if (matchedBase) {
-      return { retailer: matchedBase.retailer || '', customer: matchedBase.customer || '' };
+      return { retailer: getItemRetailer(matchedBase), customer: getItemCustomer(matchedBase) };
     }
   }
   
@@ -267,6 +273,75 @@ app.get("/api/health", safeHandler(async (req, res) => {
   });
 }));
 
+// Dedicated machine_list table helper
+async function ensureMachineInList(machineNo: string) {
+  if (!machineNo || typeof machineNo !== 'string') return;
+  const trimmed = machineNo.trim();
+  if (!trimmed) return;
+  try {
+    if (isMSSQL) {
+      await query(`
+        IF NOT EXISTS (SELECT 1 FROM dbo.machine_list WHERE machine_no = $1)
+          INSERT INTO dbo.machine_list (machine_no) VALUES ($1);
+      `, [trimmed]);
+    } else {
+      await query(`INSERT INTO machine_list (machine_no) VALUES ($1) ON CONFLICT DO NOTHING`, [trimmed]);
+    }
+  } catch (err: any) {
+    console.warn("Could not insert machine into machine_list:", err.message);
+  }
+}
+
+// Machine List Endpoints (For Dropdowns and Master Config)
+app.get("/api/machine-list", safeHandler(async (req, res) => {
+  try {
+    const result = await query("SELECT machine_no FROM machine_list ORDER BY id ASC");
+    const list = result.rows.map((r: any) => r.machine_no || r.val || r.id).filter(Boolean);
+    if (list.length > 0) {
+      return res.json(list);
+    }
+  } catch (err: any) {
+    console.warn("Error reading machine_list table:", err.message);
+  }
+
+  // Fallback: fetch distinct machine numbers from machines table
+  try {
+    const fallbackRes = await query("SELECT machine_no FROM machines ORDER BY machine_no ASC");
+    const mList = fallbackRes.rows.map((r: any) => r.machine_no || r.id).filter(Boolean);
+    if (mList.length > 0) {
+      return res.json(mList);
+    }
+  } catch (e) {}
+
+  res.json(['M-01', 'M-02', 'M-03', 'M-04', 'M-05']);
+}));
+
+app.post("/api/machine-list", safeHandler(async (req, res) => {
+  const { machineNo, machine_no, val } = req.body;
+  const targetMachine = (machineNo || machine_no || val || '').trim();
+  if (!targetMachine) {
+    return res.status(400).json({ message: "Machine identifier is required" });
+  }
+
+  await ensureMachineInList(targetMachine);
+  res.json({ message: "Machine saved to machine_list table successfully", machineNo: targetMachine });
+}));
+
+app.delete("/api/machine-list", safeHandler(async (req, res) => {
+  const { machineNo, machine_no, val } = req.body || req.query;
+  const targetMachine = (machineNo || machine_no || val || '').trim();
+  if (!targetMachine) {
+    return res.status(400).json({ message: "Machine identifier is required" });
+  }
+
+  try {
+    await query(`DELETE FROM machine_list WHERE machine_no = $1`, [targetMachine]);
+    res.json({ message: "Machine removed from machine_list table successfully" });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message || "Failed to delete machine from machine_list table" });
+  }
+}));
+
 // Master Store / Dropdowns
 app.get("/api/master-store", safeHandler(async (req, res) => {
   const tableKeys = {
@@ -290,6 +365,19 @@ app.get("/api/master-store", safeHandler(async (req, res) => {
       console.warn(`Failed to fetch from ${table}, using default/fallback:`, err.message);
       store[key] = DEFAULT_DROPDOWNS[key as keyof typeof DEFAULT_DROPDOWNS];
     }
+  }
+
+  // Fetch machineList from machine_list table
+  try {
+    const mlRes = await query("SELECT machine_no FROM machine_list ORDER BY id ASC");
+    const mList = mlRes.rows.map((r: any) => r.machine_no).filter(Boolean);
+    if (mList.length > 0) {
+      store['machineList'] = mList;
+    } else {
+      store['machineList'] = ['M-01', 'M-02', 'M-03', 'M-04', 'M-05'];
+    }
+  } catch (err: any) {
+    store['machineList'] = ['M-01', 'M-02', 'M-03', 'M-04', 'M-05'];
   }
 
   // Ensure all keys are populated (if empty in table)
@@ -331,6 +419,20 @@ app.post("/api/master-store", safeHandler(async (req, res) => {
       } catch (err: any) {
         console.error(`Error updating table ${table}:`, err.message);
       }
+    }
+  }
+
+  // Sync machineList if sent in masterStore
+  if (Array.isArray(masterStore.machineList)) {
+    try {
+      await query(`DELETE FROM machine_list`);
+      for (const item of masterStore.machineList) {
+        if (item && typeof item === 'string' && item.trim() !== '') {
+          await ensureMachineInList(item.trim());
+        }
+      }
+    } catch (err: any) {
+      console.error("Error updating machine_list table from masterStore:", err.message);
     }
   }
 
@@ -443,6 +545,9 @@ app.post("/api/machines", safeHandler(async (req, res) => {
      VALUES ($1, $2, $3, 'Idle', 'Initial Setup', 0, 0, 0, 0, NOW())`,
     [id, type, targetVal]
   );
+
+  // Automatically insert unique machine into machine_list table
+  await ensureMachineInList(id);
 
   const newMachine = {
     id,
@@ -751,6 +856,11 @@ app.get("/api/production", safeHandler(async (req, res) => {
 
 app.post("/api/production", safeHandler(async (req, res) => {
   const entry = req.body;
+
+  if (entry.MachineNo) {
+    await ensureMachineInList(entry.MachineNo);
+  }
+
   const newRollId = await calculateNextRollId();
 
   // 1. Update Roll Settings LAST_ROLL_NO
@@ -1152,13 +1262,26 @@ app.post("/api/machine-logs", safeHandler(async (req, res) => {
   res.json({ message: "Log created", id: result.rows[0].id });
 }));
 
-// Pending Orders Upload
+// Pending Orders Upload & Metadata
 app.get("/api/pending-orders/current", safeHandler(async (req, res) => {
   const resMeta = await query("SELECT config_value FROM app_config WHERE config_key = 'pending_orders_info'");
   if (resMeta.rows.length > 0) {
-    return res.json(resMeta.rows[0].config_value);
+    let val = resMeta.rows[0].config_value;
+    if (typeof val === 'string') {
+      try {
+        val = JSON.parse(val);
+      } catch (e) {
+        // use raw string if not JSON
+      }
+    }
+    return res.json(val);
   }
   res.json(null);
+}));
+
+app.get("/api/pending-orders/list", safeHandler(async (req, res) => {
+  const result = await query("SELECT pi_number, retailer, customer, imported_at FROM pending_orders ORDER BY imported_at DESC");
+  res.json(result.rows);
 }));
 
 app.post("/api/pending-orders/upload", safeHandler(async (req, res) => {
@@ -1181,83 +1304,109 @@ app.post("/api/pending-orders/upload", safeHandler(async (req, res) => {
     throw new Error("The uploaded file does not contain any readable rows.");
   }
 
-  // Column matching logic
-  let headerRowIndex = 2; // Default Row 3 is index 2
+  // Smart column detector
+  let headerRowIndex = -1;
   let piIndex = -1;
   let retailerIndex = -1;
   let customerIndex = -1;
 
-  if (rawData.length > 2) {
-    const row = rawData[2];
-    if (row && Array.isArray(row)) {
-      const colNamesLower = row.map(h => String(h || "").trim().toLowerCase());
-      piIndex = colNamesLower.findIndex(s => s && (s.includes("pi") || s.includes("proforma")));
-      retailerIndex = colNamesLower.findIndex(s => s && (s.includes("retailer") || s.includes("brand")));
-      customerIndex = colNamesLower.findIndex(s => s && (s.includes("customer") || s.includes("buyer") || s.includes("factory")));
+  const isPiHeader = (str: string) => {
+    const s = str.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return s.includes("pi") || s.includes("proforma") || s.includes("orderno") || s.includes("invoiceno") || s === "pi" || s === "pino";
+  };
+
+  const isRetailerHeader = (str: string) => {
+    const s = str.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return s.includes("retailer") || s.includes("brand") || s.includes("party") || s.includes("dealer") || s.includes("vendor") || s.includes("seller");
+  };
+
+  const isCustomerHeader = (str: string) => {
+    const s = str.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return s.includes("customer") || s.includes("buyer") || s.includes("factory") || s.includes("client") || s.includes("consignee") || s.includes("company");
+  };
+
+  // 1. Scan rows to locate header row
+  for (let r = 0; r < Math.min(rawData.length, 50); r++) {
+    const row = rawData[r];
+    if (!row || !Array.isArray(row)) continue;
+
+    const colNames = row.map(h => String(h !== undefined && h !== null ? h : "").trim());
+    
+    const foundPi = colNames.findIndex(isPiHeader);
+    const foundRetailer = colNames.findIndex(isRetailerHeader);
+    const foundCustomer = colNames.findIndex(isCustomerHeader);
+
+    if (foundPi !== -1 || (foundRetailer !== -1 && foundCustomer !== -1)) {
+      headerRowIndex = r;
+      if (foundPi !== -1) piIndex = foundPi;
+      if (foundRetailer !== -1) retailerIndex = foundRetailer;
+      if (foundCustomer !== -1) customerIndex = foundCustomer;
+      break;
     }
   }
 
-  if (piIndex === -1 || retailerIndex === -1 || customerIndex === -1) {
-    for (let r = 0; r < Math.min(rawData.length, 50); r++) {
-      if (r === 2) continue;
-      const row = rawData[r];
-      if (!row || !Array.isArray(row)) continue;
-
-      const colNamesLower = row.map(h => String(h || "").trim().toLowerCase());
-      const tempPiIndex = colNamesLower.findIndex(s => s && (s.includes("pi") || s.includes("proforma")));
-      const tempRetailerIndex = colNamesLower.findIndex(s => s && (s.includes("retailer") || s.includes("brand")));
-      const tempCustomerIndex = colNamesLower.findIndex(s => s && (s.includes("customer") || s.includes("buyer") || s.includes("factory")));
-
+  // Fallback: If no explicit header row found by keyword, inspect cells for PI patterns
+  if (piIndex === -1) {
+    for (let c = 0; c < 10; c++) {
       let matchCount = 0;
-      if (tempPiIndex !== -1) matchCount++;
-      if (tempRetailerIndex !== -1) matchCount++;
-      if (tempCustomerIndex !== -1) matchCount++;
-
+      for (let r = 0; r < Math.min(rawData.length, 30); r++) {
+        const val = String(rawData[r]?.[c] || "").trim();
+        if (/mpbl/i.test(val) || /smpl/i.test(val) || /^\d{3,}/.test(val)) {
+          matchCount++;
+        }
+      }
       if (matchCount >= 2) {
-        headerRowIndex = r;
-        if (tempPiIndex !== -1) piIndex = tempPiIndex;
-        if (tempRetailerIndex !== -1) retailerIndex = tempRetailerIndex;
-        if (tempCustomerIndex !== -1) customerIndex = tempCustomerIndex;
+        piIndex = c;
+        if (headerRowIndex === -1) headerRowIndex = 0;
         break;
       }
     }
   }
 
-  const missing: string[] = [];
-  if (piIndex === -1) missing.push("'PI No.'");
-  if (retailerIndex === -1) missing.push("'Retailer'");
-  if (customerIndex === -1) missing.push("'Customer'");
-
-  if (missing.length > 0) {
-    throw new Error(`Row 3 (or headers) did not contain required columns: ${missing.join(", ")}`);
+  if (piIndex === -1) {
+    // Ultimate fallback: column 0 is PI number, column 1 is Retailer, column 2 is Customer
+    piIndex = 0;
+    if (retailerIndex === -1) retailerIndex = 1;
+    if (customerIndex === -1) customerIndex = 2;
+    if (headerRowIndex === -1) headerRowIndex = 0;
   }
 
-  // deduplicate
+  // Extract unique valid rows
   const seen = new Set<string>();
   const uniqueRows: { pi: string, retailer: string, customer: string }[] = [];
 
-  const startIdx = headerRowIndex + 1;
+  const startIdx = headerRowIndex >= 0 ? headerRowIndex + 1 : 0;
   for (let idx = startIdx; idx < rawData.length; idx++) {
     const row = rawData[idx];
     if (!row || !Array.isArray(row)) continue;
 
     const piVal = String(row[piIndex] !== undefined && row[piIndex] !== null ? row[piIndex] : "").trim();
-    const retailerVal = String(row[retailerIndex] !== undefined && row[retailerIndex] !== null ? row[retailerIndex] : "").trim();
-    const customerVal = String(row[customerIndex] !== undefined && row[customerIndex] !== null ? row[customerIndex] : "").trim();
+    const retailerVal = retailerIndex !== -1 && row[retailerIndex] !== undefined && row[retailerIndex] !== null 
+      ? String(row[retailerIndex]).trim() 
+      : "";
+    const customerVal = customerIndex !== -1 && row[customerIndex] !== undefined && row[customerIndex] !== null 
+      ? String(row[customerIndex]).trim() 
+      : "";
 
-    if (!piVal && !retailerVal && !customerVal) continue;
+    if (!piVal || piVal.toLowerCase().includes("pi no") || piVal.toLowerCase().includes("proforma")) {
+      continue; // Skip header or empty PI
+    }
 
-    const key = `${piVal.toLowerCase()}||${retailerVal.toLowerCase()}||${customerVal.toLowerCase()}`;
+    const key = piVal.toLowerCase();
     if (!seen.has(key)) {
       seen.add(key);
       uniqueRows.push({ pi: piVal, retailer: retailerVal, customer: customerVal });
     }
   }
 
+  if (uniqueRows.length === 0) {
+    throw new Error("ফাইল থেকে কোনো গ্রহণযোগ্য PI / পেন্ডিং অর্ডারের ডাটা পাওয়া যায়নি। ফাইলটি চেক করে পুনরায় চেষ্টা করুন।");
+  }
+
   // Clear previous pending orders
   await query("DELETE FROM pending_orders");
 
-  // Save new pending orders
+  // Save new pending orders into Database
   for (const row of uniqueRows) {
     await query(
       `INSERT INTO pending_orders (pi_number, retailer, customer, imported_at)
@@ -1269,13 +1418,15 @@ app.post("/api/pending-orders/upload", safeHandler(async (req, res) => {
 
   // Backfill existing production records with retailer/customer metadata from newly imported sheet
   const prodRecords = await query("SELECT roll_id, pi_number FROM production_records");
-  for (const record of prodRecords.rows) {
-    const details = getMatchedDetails(uniqueRows.map(r => ({ pi_number: r.pi, retailer: r.retailer, customer: r.customer })), record.pi_number);
-    if (details.retailer || details.customer) {
-      await query(
-        "UPDATE production_records SET retailer = $1, customer = $2 WHERE roll_id = $3",
-        [details.retailer, details.customer, record.roll_id]
-      );
+  if (prodRecords.rows && prodRecords.rows.length > 0) {
+    for (const record of prodRecords.rows) {
+      const details = getMatchedDetails(uniqueRows.map(r => ({ pi_number: r.pi, retailer: r.retailer, customer: r.customer })), record.pi_number);
+      if (details.retailer || details.customer) {
+        await query(
+          "UPDATE production_records SET retailer = $1, customer = $2 WHERE roll_id = $3",
+          [details.retailer, details.customer, record.roll_id]
+        );
+      }
     }
   }
 
